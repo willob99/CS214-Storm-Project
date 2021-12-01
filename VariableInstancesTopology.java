@@ -17,6 +17,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Random;
+
+import java.util.Random;
+import org.apache.storm.starter.spout.TestRandomSentenceSpout;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.testing.TestWordSpout;
@@ -27,6 +31,7 @@ import org.apache.storm.topology.base.BaseRichBolt;
 import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
 import org.apache.storm.tuple.Values;
+import org.apache.storm.utils.Utils;
 
 /**
  * This is a basic example of a Storm topology.
@@ -44,21 +49,21 @@ public class VariableInstancesTopology extends ConfigurableTopology {
         int numBoltsAndSpouts = 4;
         ArrayList<Integer> numInstances = new ArrayList<Integer>();
 
-        if (args != null && args.length > 0) {
-            if (args.length != numBoltsAndSpouts) {
+        if (args != null && args.length > 1) {
+            if (args.length - 1 != numBoltsAndSpouts) {
                 System.out.println("wrong number of arguments, defaulting to all 1s");
                 for (int i = 0; i < numBoltsAndSpouts; i++) {
                     numInstances.add(1);
                 }
             }
             else {
-                for (String num : args) {
-                    numInstances.add(Integer.parseInt(num));
+                for (int i = 1; i < args.length; i++) {
+                    numInstances.add(Integer.parseInt(args[i]));
                 }
             }
         }
         else {
-            // If no args provided, default all to 1.
+            // If no instance numbers provided, default all to 1.
             for (int i = 0; i < numBoltsAndSpouts; i++) {
                 numInstances.add(1);
             }
@@ -76,7 +81,10 @@ public class VariableInstancesTopology extends ConfigurableTopology {
             System.out.println(e);
         }
 
-        builder.setSpout("word", new TestWordSpout(), numInstances.get(0));
+        // builder.setSpout("word", new TestWordSpout(), numInstances.get(0));
+        builder.setSpout("word", new TestWordSpout(), 1);
+        // builder.setSpout("word", new TestRandomSentenceSpout(), numInstances.get(0));
+        // builder.setSpout("word", new TestRandomSentenceSpout(), 1);
         builder.setBolt("exclaim1", new ExclamationBolt(), numInstances.get(1)).shuffleGrouping("word");
         builder.setBolt("exclaim2", new ExclamationBolt(), numInstances.get(2)).shuffleGrouping("exclaim1");
         builder.setBolt("output", new WriteFileBolt(), numInstances.get(3)).shuffleGrouping("exclaim2");
@@ -86,7 +94,7 @@ public class VariableInstancesTopology extends ConfigurableTopology {
         // Think about number of workers to use
         conf.setNumWorkers(3);
 
-        return submit("dynamic-instances-test", conf, builder);
+        return submit(args[0], conf, builder);
     }
 
     public static class ExclamationBolt extends BaseRichBolt {
@@ -99,7 +107,16 @@ public class VariableInstancesTopology extends ConfigurableTopology {
 
         @Override
         public void execute(Tuple tuple) {
-            collector.emit(tuple, new Values(tuple.getString(0) + "!!!"));
+            // Utils.sleep(100);
+            Random rand = new Random(System.currentTimeMillis());
+            int exp = (int)(rand.nextFloat() * 13);
+            int stop = (int)Math.round(Math.pow(5, exp));
+            String outputString = tuple.getString(0);
+            for (int i = 0; i < stop; i++) {
+                outputString = outputString.concat("!");
+            }
+            collector.emit(tuple, new Values(outputString));
+            // collector.emit(tuple, new Values(tuple.getString(0) + "!!!"));
             collector.ack(tuple);
         }
 
@@ -121,6 +138,7 @@ public class VariableInstancesTopology extends ConfigurableTopology {
 
         @Override
         public void execute(Tuple tuple) {
+            System.out.println(tuple.getString(0));
             try {
                 FileWriter fw = new FileWriter(baseDir.concat("/out.txt"), true);
                 fw.write(tuple.getString(0));
