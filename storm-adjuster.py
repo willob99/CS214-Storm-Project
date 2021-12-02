@@ -1,8 +1,22 @@
 from datetime import datetime
-import subprocess
-import requests
 import json
+import requests
+import signal
+import subprocess
+import sys
 import time
+
+topo_running = False
+topology_name = ""
+
+# If there is a topology running when SIGINT (Ctrl-C) is received, kill it.
+def sigint_handler(sig, frame):
+    if (topo_running):
+        killcmd = ["sudo", "python3", STORM_PY_LOC, "kill", topology_name]
+        subprocess.run(killcmd)
+        print("Killed topology ", topology_name)
+    sys.exit(0)
+signal.signal(signal.SIGINT, sigint_handler)
 
 # Location of Python Storm client
 STORM_PY_LOC="/opt/apache-storm-2.3.0/bin/storm.py"
@@ -11,15 +25,19 @@ LOCAL_OR_JAR="jar"
 # Location of Storm jar file
 JAR_FILE_LOC="/opt/apache-storm-2.3.0/examples/storm-starter/target/storm-starter-2.3.0.jar"
 # Topology to submit
-TOPOLOGY="org.apache.storm.starter.VariableInstancesTopology"
+if (len(sys.argv) > 1):
+    TOPOLOGY= sys.argv[1]
+else:
+    TOPOLOGY="org.apache.storm.starter.VariableInstancesTopology"
 
 # How many instances to start with for each spout and bolt.
-STARTING_INSTANCES=2
+STARTING_INSTANCES = 2
 # Number of bolts and spouts in the topology.
 NUM_BOLTS_AND_SPOUTS = 4
 # List giving the number of instances for each spout and bolt.
 # They all start out with the same number.
 num_instances = [STARTING_INSTANCES] * NUM_BOLTS_AND_SPOUTS
+print("numbers of instances: ", num_instances)
 
 # Build command to submit topology
 cmd = ["sudo", "python3", STORM_PY_LOC, LOCAL_OR_JAR, JAR_FILE_LOC, TOPOLOGY]
@@ -34,7 +52,9 @@ cmd = cmd + list(map(lambda num: str(num), num_instances))
 
 # Execute command to submit initial topology.
 subprocess.run(cmd)
-print("Pausing while topology is submitted")
+topo_running = True
+print("Submitted topology")
+print("Pausing while topology runs")
 time.sleep(60)
 
 # Run until killed, similar to a Storm topology.
@@ -43,8 +63,8 @@ while (1):
     topology_info = requests.get("http://localhost:8080/api/v1/topology/summary").json()
     cluster_info = requests.get("http://localhost:8080/api/v1/cluster/summary").json()
     # For debugging
-    print(topology_info)
-    print(cluster_info)
+    # print(topology_info)
+    # print(cluster_info)
 
     # Extract useful metrics.
     # requestedTotalMem = topology_info['topologies'][-1]['requestedTotalMem']
@@ -64,11 +84,20 @@ while (1):
         killcmd = ["sudo", "python3", STORM_PY_LOC, "kill", topology_name]
         subprocess.run(killcmd)
         time.sleep(5)
-        print("killed topology")
+        topo_running = False
+        print("Killed topology ", topology_name)
 
         # Generate new numbers of instances (for now, keep it the same for all spouts and bolts).
-        num_instances = [max(num_instances[0] - 1, 1) if mem_ratio > 0.90 else num_instances[0] + 1] * NUM_BOLTS_AND_SPOUTS
-        print("num_instances: ", num_instances)
+        if (mem_ratio > 0.90):
+            instances_each = max(num_instances[0] - 1, 1)
+        elif (mem_ratio < 0.55):
+            instances_each = num_instances[0] + 2
+        else:
+            instances_each = num_instances[0] + 1
+        num_instances = [instances_each] * NUM_BOLTS_AND_SPOUTS
+
+        # num_instances = [max(num_instances[0] - 1, 1) if mem_ratio > 0.90 else num_instances[0] + 2] * NUM_BOLTS_AND_SPOUTS
+        print("numbers of instances: ", num_instances)
 
         cmd = ["sudo", "python3", STORM_PY_LOC, LOCAL_OR_JAR, JAR_FILE_LOC, TOPOLOGY]
         # Generate new topology name.
@@ -78,8 +107,10 @@ while (1):
         # Submit topology with new numbers of instances.
         cmd = cmd + list(map(lambda num: str(num), num_instances))
         subprocess.run(cmd)
+        topo_running = True
 
     # Wait until time to check again (in production, this will be much larger).
+    print("Running topology...")
     time.sleep(60)
  
 
